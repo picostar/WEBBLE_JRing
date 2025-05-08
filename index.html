@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SR08 Smart Ring Data Reader</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 700px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            color: white;
+            background-color: #2962ff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #0039cb;
+        }
+        #status, #data {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        #status {
+            background-color: #e3f2fd;
+            color: #0d47a1;
+        }
+        #data {
+            background-color: #f1f8e9;
+            color: #33691e;
+        }
+    </style>
+</head>
+<body>
+    <h1>SR08 Smart Ring Data Reader</h1>
+    <button id="connectButton">Connect to SR08 Ring</button>
+
+    <div id="status">Status: Not connected.</div>
+    <div id="data"></div>
+
+    <script>
+        document.getElementById('connectButton').addEventListener('click', async () => {
+            const statusDiv = document.getElementById('status');
+            const dataDiv = document.getElementById('data');
+            
+            try {
+                statusDiv.textContent = 'Status: Requesting device...';
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: 'SR08' }],
+                    optionalServices: ['battery_service', 'heart_rate']
+                });
+
+                statusDiv.textContent = `Status: Connecting to ${device.name}...`;
+                const server = await device.gatt.connect();
+                statusDiv.textContent = 'Status: Connected.';
+
+                // Battery Level
+                const batteryService = await server.getPrimaryService('battery_service');
+                const batteryCharacteristic = await batteryService.getCharacteristic('battery_level');
+                const batteryData = await batteryCharacteristic.readValue();
+                const batteryLevel = batteryData.getUint8(0);
+
+                // Heart Rate
+                const heartRateService = await server.getPrimaryService('heart_rate');
+                const heartRateCharacteristic = await heartRateService.getCharacteristic('heart_rate_measurement');
+                heartRateCharacteristic.startNotifications().then(char => {
+                    char.addEventListener('characteristicvaluechanged', event => {
+                        const value = event.target.value;
+                        const heartRate = value.getUint8(1);
+                        dataDiv.innerHTML = `
+                            <strong>Battery Level:</strong> ${batteryLevel}%<br>
+                            <strong>Heart Rate:</strong> ${heartRate} bpm
+                        `;
+                    });
+                });
+
+            } catch (error) {
+                statusDiv.textContent = `Error: ${error.message}`;
+                console.error(error);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>SR08 Service Explorer</title>
+</head>
+<body>
+    <button id="connect">Connect & Discover Services</button>
+    <pre id="output"></pre>
+
+    <script>
+        const output = document.getElementById('output');
+        document.getElementById('connect').onclick = async () => {
+            try {
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: 'SR08' }],
+                    optionalServices: ['generic_access']
+                });
+                const server = await device.gatt.connect();
+                output.textContent += 'Connected.\nDiscovering services...\n';
+
+                const services = await server.getPrimaryServices();
+                for (const service of services) {
+                    output.textContent += `Service: ${service.uuid}\n`;
+                    const characteristics = await service.getCharacteristics();
+                    for (const characteristic of characteristics) {
+                        output.textContent += `--> Characteristic: ${characteristic.uuid}\n`;
+                    }
+                }
+            } catch (error) {
+                output.textContent += `Error: ${error}\n`;
+            }
+        };
+    </script>
+</body>
+</html>

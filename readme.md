@@ -1,49 +1,61 @@
-# SR08 J-Ring Service Explorer
+# WEBBLE_CGM
 
-A web-based tool for exploring Bluetooth Low Energy (BLE) services and characteristics on the SR08 J-Ring device. Connect, discover, and read all available services and characteristics, including heart rate, SpO2, and battery information.
+This project contains a collection of HTML files for interacting with Bluetooth-enabled devices, such as the SR08 Smart Ring. These tools leverage the Web Bluetooth API to connect, discover services, and interact with Bluetooth devices.
 
----
+## Project Structure
 
-## ⚠️ Important: Enable Experimental Web Bluetooth
+### File Descriptions
 
-To use this tool, you must enable the experimental **Web Bluetooth** feature in your browser settings.
+- **index.html**  
+  A simple interface for connecting to the SR08 Smart Ring and reading basic data such as battery level and heart rate.
 
-- **For Chrome:**  
-  1. Go to `chrome://flags/#enable-experimental-web-platform-features`
-  2. Enable it.
-  3. Restart your browser.
+- **scan.html**  
+  A general-purpose Bluetooth device scanner that lists nearby devices and their signal strength.
 
-Other Chromium-based browsers may have similar settings.
+- **sr08.html**  
+  An advanced service explorer for the SR08 J-Ring. It provides detailed information about services, characteristics, and notifications, along with a dashboard for live data updates.
 
----
+- **sr08v1.html**  
+  A basic version of the SR08 Service Explorer. It connects to the SR08 device and lists its services and characteristics.
+
+- **sr08v2.html**  
+  An enhanced version of the SR08 Service Explorer with improved UI and additional features like parsing known services and characteristics.
 
 ## Features
 
-- Connect to the SR08 J-Ring via Web Bluetooth
-- Discover all available GATT services and characteristics
-- Read and display values for known characteristics (Heart Rate, Battery Level, Device Name, etc.)
-- Subscribe to notifications for real-time updates
-- User-friendly log and notification display
+- **Bluetooth Device Scanning**  
+  Use `scan.html` to discover nearby Bluetooth devices.
 
----
-
-## Usage
-
-1. Open `Jring.html` in a supported web browser (such as Chrome or Edge with Web Bluetooth enabled).
-2. Click **Connect to SR08** and select your SR08 J-Ring device.
-3. Explore the discovered services and characteristics.
-4. View logs and notifications in the provided panels.
-
----
+- **SR08 Smart Ring Support**  
+  - Connect to the SR08 Smart Ring using `index.html`, `sr08.html`, `sr08v1.html`, or `sr08v2.html`.
+  - Explore services and characteristics.
+  - Read and display data such as heart rate, SpO2, and battery level.
+  - Enable notifications for real-time updates.
 
 ## Requirements
 
-- A compatible browser with [Web Bluetooth API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Bluetooth_API) support
-- Experimental Web Bluetooth feature enabled (see above)
-- SR08 J-Ring device
+- A modern browser with Web Bluetooth API support (e.g., Chrome, Edge, or Opera).
+- Bluetooth-enabled devices such as the SR08 Smart Ring.
 
----
+## Usage
+
+1. Open the desired HTML file in a browser.
+2. Follow the on-screen instructions to connect to a Bluetooth device.
+3. Interact with the device to explore services, read data, or enable notifications.
+
+### Example: Connecting to the SR08 Smart Ring
+
+1. Open `sr08.html` in your browser.
+2. Click the "Connect to SR08" button.
+3. Select your SR08 device from the list of available devices.
+4. Explore the services and characteristics or view live data updates.
+
+## Notes
+
+- Ensure that Bluetooth is enabled on your device.
+- Some features may require specific permissions or device configurations.
+- The Web Bluetooth API is not supported on all browsers or platforms.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the MIT License. See the `LICENSE` file for details.

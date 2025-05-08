@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bluetooth Device Scanner</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #2962ff;
+            margin-bottom: 30px;
+        }
+        button {
+            background-color: #2962ff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0039cb;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .info {
+            background-color: #e3f2fd;
+            color: #0d47a1;
+        }
+        .success {
+            background-color: #e8f5e9;
+            color: #1b5e20;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #b71c1c;
+        }
+        #deviceList {
+            list-style-type: none;
+            padding: 0;
+        }
+        .device-item {
+            background-color: #f5f5f5;
+            margin-bottom: 10px;
+            padding: 15px;
+            border-radius: 4px;
+            border-left: 4px solid #2962ff;
+        }
+        .device-name {
+            font-weight: bold;
+            font-size: 18px;
+        }
+        .device-id {
+            color: #666;
+            font-family: monospace;
+            margin-top: 5px;
+        }
+        .device-rssi {
+            color: #333;
+            margin-top: 5px;
+        }
+        #scanningIndicator {
+            display: none;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border-left-color: #2962ff;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <h1>Bluetooth Device Scanner</h1>
+    
+    <p>Click the button below to start scanning for Bluetooth devices in range.</p>
+    
+    <button id="scanButton">Scan for Bluetooth Devices</button>
+    <button id="stopButton" disabled>Stop Scanning</button>
+    
+    <div id="scanningIndicator">
+        <div class="spinner"></div>
+        <span>Scanning for devices...</span>
+    </div>
+    
+    <div id="status" class="info">Ready to scan. Make sure Bluetooth is enabled on your device.</div>
+    
+    <h2>Discovered Devices</h2>
+    <ul id="deviceList"></ul>
+
+    <script>
+        // DOM elements
+        const scanButton = document.getElementById('scanButton');
+        const stopButton = document.getElementById('stopButton');
+        const statusDiv = document.getElementById('status');
+        const deviceList = document.getElementById('deviceList');
+        const scanningIndicator = document.getElementById('scanningIndicator');
+        
+        // Store discovered devices to avoid duplicates
+        let discoveredDevices = new Map();
+        let bluetoothScanner = null;
+        
+        // Check if Web Bluetooth is supported
+        if (!navigator.bluetooth) {
+            statusDiv.textContent = 'Web Bluetooth is not supported in your browser. Try Chrome or Edge.';
+            statusDiv.className = 'error';
+            scanButton.disabled = true;
+        }
+        
+        // Function to start scanning
+        async function startScanning() {
+            try {
+                console.log('Attempting to start scanning...');
+                // Clear previous results
+                discoveredDevices.clear();
+                deviceList.innerHTML = '';
+                
+                // Update UI
+                scanButton.disabled = true;
+                stopButton.disabled = false;
+                scanningIndicator.style.display = 'flex';
+                statusDiv.textContent = 'Requesting Bluetooth permission...';
+                statusDiv.className = 'info';
+                
+                // Request a Bluetooth device
+                const device = await navigator.bluetooth.requestDevice({
+                    acceptAllDevices: true,
+                    optionalServices: ['battery_service'] // Add other services if needed
+                });
+                
+                statusDiv.textContent = `Device found: ${device.name || 'Unknown Device'}`;
+                statusDiv.className = 'success';
+                
+                // Add the device to the list
+                discoveredDevices.set(device.id, {
+                    name: device.name || 'Unknown Device',
+                    id: device.id,
+                    rssi: 'N/A' // RSSI is not available with requestDevice
+                });
+                
+                updateDeviceList();
+            } catch (error) {
+                handleError(error);
+                stopScanning();
+            }
+        }
+        
+        // Function to handle Bluetooth advertisements
+        function handleAdvertisement(event) {
+            console.log('Advertisement received:', event);
+            const device = event.device;
+            const deviceId = device.id;
+            
+            // Only add the device if we haven't seen it before
+            if (!discoveredDevices.has(deviceId)) {
+                discoveredDevices.set(deviceId, {
+                    name: device.name || 'Unknown Device',
+                    id: deviceId,
+                    rssi: event.rssi
+                });
+                
+                // Add the device to the UI
+                updateDeviceList();
+            } else {
+                // Update RSSI for existing device
+                const existingDevice = discoveredDevices.get(deviceId);
+                existingDevice.rssi = event.rssi;
+                updateDeviceList();
+            }
+        }
+        
+        // Function to update the device list
+        function updateDeviceList() {
+            // Clear the list
+            deviceList.innerHTML = '';
+            
+            // Add each device to the list
+            discoveredDevices.forEach(device => {
+                const listItem = document.createElement('li');
+                listItem.className = 'device-item';
+                
+                const nameElement = document.createElement('div');
+                nameElement.className = 'device-name';
+                nameElement.textContent = device.name;
+                
+                const idElement = document.createElement('div');
+                idElement.className = 'device-id';
+                idElement.textContent = `ID: ${device.id}`;
+                
+                const rssiElement = document.createElement('div');
+                rssiElement.className = 'device-rssi';
+                rssiElement.textContent = `Signal Strength: ${device.rssi} dBm`;
+                
+                listItem.appendChild(nameElement);
+                listItem.appendChild(idElement);
+                listItem.appendChild(rssiElement);
+                
+                deviceList.appendChild(listItem);
+            });
+            
+            // Show message if no devices found
+            if (discoveredDevices.size === 0) {
+                deviceList.innerHTML = '<p>No devices found yet. Make sure Bluetooth devices nearby are discoverable.</p>';
+            }
+        }
+        
+        // Function to stop scanning
+        function stopScanning() {
+            if (bluetoothScanner) {
+                bluetoothScanner.stop();
+                navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
+                bluetoothScanner = null;
+            }
+            
+            // Update UI
+            scanButton.disabled = false;
+            stopButton.disabled = true;
+            scanningIndicator.style.display = 'none';
+            
+            if (discoveredDevices.size > 0) {
+                statusDiv.textContent = `Scanning stopped. Found ${discoveredDevices.size} device(s).`;
+            } else {
+                statusDiv.textContent = 'Scanning stopped. No devices found.';
+            }
+        }
+        
+        // Handle errors
+        function handleError(error) {
+            console.error('Bluetooth Error:', error);
+            let message = 'An error occurred: ';
+            
+            if (error.name === 'NotFoundError') {
+                message += 'No Bluetooth devices found nearby.';
+            } else if (error.name === 'SecurityError' || error.name === 'NotAllowedError') {
+                message += 'Bluetooth permission denied. Please allow Bluetooth access.';
+            } else if (error.name === 'InvalidStateError') {
+                message += 'Bluetooth adapter is not available.';
+            } else {
+                message += error.message || 'Unknown error';
+            }
+            
+            statusDiv.textContent = message;
+            statusDiv.className = 'error';
+        }
+        
+        // Event listeners
+        scanButton.addEventListener('click', startScanning);
+        stopButton.addEventListener('click', stopScanning);
+    </script>
+</body>
+</html>

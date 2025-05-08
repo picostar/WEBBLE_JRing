@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SR08 J-Ring Service Explorer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .service {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #e6f7ff;
+            border-left: 5px solid #1890ff;
+        }
+        .characteristic {
+            margin-left: 20px;
+            margin-top: 5px;
+            padding: 8px;
+            background-color: #f6ffed;
+            border-left: 3px solid #52c41a;
+        }
+        .value {
+            margin-left: 40px;
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #fff7e6;
+            border-left: 2px solid #faad14;
+            font-family: monospace;
+        }
+        .error {
+            color: red;
+        }
+        .descriptor {
+            margin-left: 40px;
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #f9f0ff;
+            border-left: 2px solid #722ed1;
+        }
+        #notifications {
+            margin-top: 20px;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>SR08 J-Ring Service Explorer</h1>
+    <p>This tool will help you discover and read all available services and characteristics from your SR08 J-Ring, including heart rate, SpO2, and battery information.</p>
+    
+    <div>
+        <button id="connect">Connect to SR08</button>
+        <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    
+    <div id="deviceInfo"></div>
+    <div id="servicesContainer"></div>
+    <h3>Log:</h3>
+    <pre id="output"></pre>
+    <div id="notifications">
+        <h3>Notifications:</h3>
+        <pre id="notificationOutput"></pre>
+    </div>
+    
+    <script>
+        // DOM elements
+        const connectButton = document.getElementById('connect');
+        const disconnectButton = document.getElementById('disconnect');
+        const output = document.getElementById('output');
+        const deviceInfoDiv = document.getElementById('deviceInfo');
+        const servicesContainer = document.getElementById('servicesContainer');
+        const notificationOutput = document.getElementById('notificationOutput');
+        
+        // Global variables
+        let bluetoothDevice;
+        let gattServer;
+        let notificationCharacteristics = new Map();
+        
+        // Known service and characteristic UUIDs
+        const knownServices = {
+            '00001800-0000-1000-8000-00805f9b34fb': 'Generic Access',
+            '00001801-0000-1000-8000-00805f9b34fb': 'Generic Attribute',
+            '0000180d-0000-1000-8000-00805f9b34fb': 'Heart Rate Service',
+            '0000180f-0000-1000-8000-00805f9b34fb': 'Battery Service',
+            '00001809-0000-1000-8000-00805f9b34fb': 'Health Thermometer',
+            '00001822-0000-1000-8000-00805f9b34fb': 'Pulse Oximeter Service',
+            
+            // SR08 J-Ring specific services
+            '00000812-0000-1000-8000-00805f9b34fb': 'SR08 Health Service (0x812)',
+            '0000fef5-0000-1000-8000-00805f9b34fb': 'SR08 Activity Service (0xFEF5)',
+            '000056ff-0000-1000-8000-00805f9b34fb': 'SR08 Control Service (0x56FF)',
+            
+            // Short versions (some devices use these)
+            '0812': 'SR08 Health Service (0x812)',
+            'fef5': 'SR08 Activity Service (0xFEF5)',
+            '56ff': 'SR08 Control Service (0x56FF)'
+        };
+        
+        const knownCharacteristics = {
+            '00002a00-0000-1000-8000-00805f9b34fb': 'Device Name',
+            '00002a01-0000-1000-8000-00805f9b34fb': 'Appearance',
+            '00002a19-0000-1000-8000-00805f9b34fb': 'Battery Level',
+            '00002a37-0000-1000-8000-00805f9b34fb': 'Heart Rate Measurement',
+            '00002a5e-0000-1000-8000-00805f9b34fb': 'PLX Spot-Check Measurement',
+            '00002a5f-0000-1000-8000-00805f9b34fb': 'PLX Continuous Measurement'
+        };
+        
+        // Helper function to log to output
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        // Helper function to log notifications
+        function logNotification(uuid, value) {
+            const timestamp = new Date().toLocaleTimeString();
+            const serviceName = getServiceName(uuid.split('-')[0]);
+            notificationOutput.textContent += `[${timestamp}] ${serviceName} (${uuid}): ${value}\n`;
+            notificationOutput.scrollTop = notificationOutput.scrollHeight;
+        }
+        
+        // Get friendly name for service UUID
+        function getServiceName(uuid) {
+            return knownServices[uuid] || 'Unknown Service';
+        }
+        
+        // Get friendly name for characteristic UUID
+        function getCharacteristicName(uuid) {
+            return knownCharacteristics[uuid] || 'Unknown Characteristic';
+        }
+        
+        // Convert ArrayBuffer to hex string
+        function bufferToHex(buffer) {
+            return Array.from(new Uint8Array(buffer))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join(' ');
+        }
+        
+        // Parse heart rate measurement
+        function parseHeartRate(value) {
+            const dataView = new DataView(value.buffer);
+            const flags = dataView.getUint8(0);
+            const hrFormat = flags & 0x1; // 0 = UINT8, 1 = UINT16
+            
+            let heartRate;
+            if (hrFormat === 0) {
+                heartRate = dataView.getUint8(1);
+            } else {
+                heartRate = dataView.getUint16(1, true);
+            }
+            
+            return `Heart Rate: ${heartRate} BPM`;
+        }
+        
+        // Parse battery level
+        function parseBatteryLevel(value) {
+            const dataView = new DataView(value.buffer);
+            const level = dataView.getUint8(0);
+            return `Battery Level: ${level}%`;
+        }
+        
+        // Try to parse known values
+        function parseValue(characteristic, value) {
+            const uuid = characteristic.uuid;
+            const serviceUuid = characteristic.service.uuid;
+            
+            // Try to parse known characteristics
+            if (uuid === '00002a37-0000-1000-8000-00805f9b34fb') { // Heart Rate Measurement
+                return parseHeartRate(value);
+            } else if (uuid === '00002a19-0000-1000-8000-00805f9b34fb') { // Battery Level
+                return parseBatteryLevel(value);
+            } else if (uuid === '00002a00-0000-1000-8000-00805f9b34fb') { // Device Name
+                return `Device Name: ${new TextDecoder().decode(value)}`;
+            }
+            
+            // Try to interpret custom SR08 characteristics
+            if (serviceUuid.includes('0812') || serviceUuid.includes('fef5') || serviceUuid.includes('56ff')) {
+                return parseSR08Data(characteristic, value);
+            }
+            
+            // Default to hex representation
+            return `Raw Value: ${bufferToHex(value.buffer)}`;
+        }
+        
+        // Parse SR08 custom data
+        function parseSR08Data(characteristic, value) {
+            const dataView = new DataView(value.buffer);
+            const byteArray = new Uint8Array(value.buffer);
+            const uuid = characteristic.uuid;
+            const serviceUuid = characteristic.service.uuid;
+            
+            // Create a generic description first
+            let result = `Raw Value: ${bufferToHex(value.buffer)}`;
+            
+            // Try to interpret based on service and characteristic
+            if (serviceUuid.includes('0812')) {
+                // Health service 0x812
+                if (byteArray.length >= 2) {
+                    // Common health data patterns
+                    if (byteArray[0] === 0x01 || byteArray[0] === 0x02) {
+                        // Possibly heart rate or SpO2
+                        if (byteArray.length >= 3) {
+                            result += `\nPossible health reading: ${byteArray[1]} (Primary), ${byteArray[2]} (Secondary)`;
+                        }
+                    }
+                }
+            } else if (serviceUuid.includes('fef5')) {
+                // Activity service 0xFEF5
+                if (byteArray.length >= 4) {
+                    // Try to interpret as step count if first byte is a command byte
+                    if (byteArray[0] <= 0x10) {
+                        // Bytes 1-3 could be step count (common pattern)
+                        const steps = (byteArray[1] << 16) + (byteArray[2] << 8) + byteArray[3];
+                        result += `\nPossible step count: ${steps}`;
+                    }
+                }
+            } else if (serviceUuid.includes('56ff')) {
+                // Control service 0x56FF
+                if (byteArray.length >= 2) {
+                    // Often contains battery info or settings
+                    if (byteArray[0] === 0x0A || byteArray[0] === 0x0B) {
+                        result += `\nPossible battery level: ${byteArray[1]}%`;
+                    }
+                }
+            }
+            
+            return result;
+        }
+        
+        // Handle characteristic notifications
+        function handleCharacteristicValueChanged(event) {
+            const characteristic = event.target;
+            const value = event.target.value;
+            const parsed = parseValue(characteristic, value);
+            logNotification(characteristic.uuid, parsed);
+        }
+        
+        // Get property names from characteristic properties
+        function getPropertyNames(properties) {
+            const propertyNames = [];
+            if (properties.broadcast) propertyNames.push('broadcast');
+            if (properties.read) propertyNames.push('read');
+            if (properties.writeWithoutResponse) propertyNames.push('writeWithoutResponse');
+            if (properties.write) propertyNames.push('write');
+            if (properties.notify) propertyNames.push('notify');
+            if (properties.indicate) propertyNames.push('indicate');
+            if (properties.authenticatedSignedWrites) propertyNames.push('authenticatedSignedWrites');
+            if (properties.reliableWrite) propertyNames.push('reliableWrite');
+            if (properties.writableAuxiliaries) propertyNames.push('writableAuxiliaries');
+            return propertyNames.join(', ');
+        }
+        
+        // Create HTML elements for each service and characteristic
+        async function displayService(service) {
+            const serviceDiv = document.createElement('div');
+            serviceDiv.className = 'service';
+            
+            const friendlyName = getServiceName(service.uuid);
+            serviceDiv.innerHTML = `<h3>Service: ${friendlyName} (${service.uuid})</h3>`;
+            
+            try {
+                const characteristics = await service.getCharacteristics();
+                log(`Found ${characteristics.length} characteristics in service ${service.uuid}`);
+                
+                for (const characteristic of characteristics) {
+                    const characteristicDiv = document.createElement('div');
+                    characteristicDiv.className = 'characteristic';
+                    
+                    const charName = getCharacteristicName(characteristic.uuid);
+                    const properties = getPropertyNames(characteristic.properties);
+                    characteristicDiv.innerHTML = `<h4>Characteristic: ${charName} (${characteristic.uuid})</h4>
+                                                <p>Properties: ${properties}</p>`;
+                    
+                    // Create buttons based on the characteristic's properties
+                    if (characteristic.properties.read) {
+                        const readButton = document.createElement('button');
+                        readButton.textContent = 'Read Value';
+                        readButton.onclick = async () => {
+                            try {
+                                const value = await characteristic.readValue();
+                                const parsed = parseValue(characteristic, value);
+                                
+                                // Display the value
+                                let valueDiv = characteristicDiv.querySelector('.value');
+                                if (!valueDiv) {
+                                    valueDiv = document.createElement('div');
+                                    valueDiv.className = 'value';
+                                    characteristicDiv.appendChild(valueDiv);
+                                }
+                                valueDiv.innerHTML = `<p>${parsed}</p>
+                                                   <p>Raw: ${bufferToHex(value.buffer)}</p>`;
+                                
+                                log(`Read value from ${characteristic.uuid}: ${parsed}`);
+                            } catch (error) {
+                                log(`Error reading ${characteristic.uuid}: ${error}`);
+                                const errorDiv = document.createElement('div');
+                                errorDiv.className = 'error';
+                                errorDiv.textContent = `Error: ${error}`;
+                                characteristicDiv.appendChild(errorDiv);
+                            }
+                        };
+                        characteristicDiv.appendChild(readButton);
+                    }
+                    
+                    if (characteristic.properties.notify || characteristic.properties.indicate) {
+                        const notifyButton = document.createElement('button');
+                        notifyButton.textContent = characteristic.properties.notify ? 
+                                                'Start Notifications' : 'Start Indications';
+                        
+                        notifyButton.onclick = async () => {
+                            try {
+                                if (!notificationCharacteristics.has(characteristic.uuid)) {
+                                    // Start notifications
+                                    await characteristic.startNotifications();
+                                    characteristic.addEventListener('characteristicvaluechanged',
+                                                                 handleCharacteristicValueChanged);
+                                    notificationCharacteristics.set(characteristic.uuid, characteristic);
+                                    notifyButton.textContent = 'Stop Notifications';
+                                    log(`Started notifications for ${characteristic.uuid}`);
+                                } else {
+                                    // Stop notifications
+                                    await characteristic.stopNotifications();
+                                    characteristic.removeEventListener('characteristicvaluechanged',
+                                                                    handleCharacteristicValueChanged);
+                                    notificationCharacteristics.delete(characteristic.uuid);
+                                    notifyButton.textContent = characteristic.properties.notify ?
+                                                             'Start Notifications' : 'Start Indications';
+                                    log(`Stopped notifications for ${characteristic.uuid}`);
+                                }
+                            } catch (error) {
+                                log(`Error with notifications for ${characteristic.uuid}: ${error}`);
+                                const errorDiv = document.createElement('div');
+                                errorDiv.className = 'error';
+                                errorDiv.textContent = `Error: ${error}`;
+                                characteristicDiv.appendChild(errorDiv);
+                            }
+                        };
+                        characteristicDiv.appendChild(notifyButton);
+                    }
+                    
+                    if (characteristic.properties.write) {
+                        const writeButton = document.createElement('button');
+                        writeButton.textContent = 'Write Value';
+                        writeButton.onclick = async () => {
+                            const hexValue = prompt('Enter hex value (space separated, e.g., "01 02 03"):');
+                            if (hexValue) {
+                                try {
+                                    const bytes = hexValue.split(' ').map(hex => parseInt(hex, 16));
+                                    await characteristic.writeValue(new Uint8Array(bytes));
+                                    log(`Wrote value to ${characteristic.uuid}: ${hexValue}`);
+                                } catch (error) {
+                                    log(`Error writing to ${characteristic.uuid}: ${error}`);
+                                    const errorDiv = document.createElement('div');
+                                    errorDiv.className = 'error';
+                                    errorDiv.textContent = `Error: ${error}`;
+                                    characteristicDiv.appendChild(errorDiv);
+                                }
+                            }
+                        };
+                        characteristicDiv.appendChild(writeButton);
+                    }
+                    
+                    // Try to get descriptors
+                    try {
+                        const descriptors = await characteristic.getDescriptors();
+                        if (descriptors.length > 0) {
+                            for (const descriptor of descriptors) {
+                                const descriptorDiv = document.createElement('div');
+                                descriptorDiv.className = 'descriptor';
+                                descriptorDiv.innerHTML = `<p>Descriptor: ${descriptor.uuid}</p>`;
+                                
+                                // Try to read the descriptor
+                                try {
+                                    const value = await descriptor.readValue();
+                                    descriptorDiv.innerHTML += `<p>Value: ${bufferToHex(value.buffer)}</p>`;
+                                } catch (error) {
+                                    descriptorDiv.innerHTML += `<p class="error">Error reading: ${error}</p>`;
+                                }
+                                
+                                characteristicDiv.appendChild(descriptorDiv);
+                            }
+                        }
+                    } catch (error) {
+                        log(`Error getting descriptors for ${characteristic.uuid}: ${error}`);
+                    }
+                    
+                    serviceDiv.appendChild(characteristicDiv);
+                }
+            } catch (error) {
+                log(`Error getting characteristics for service ${service.uuid}: ${error}`);
+                serviceDiv.innerHTML += `<p class="error">Error: ${error}</p>`;
+            }
+            
+            servicesContainer.appendChild(serviceDiv);
+        }
+        
+        // Try to authenticate with the device
+        async function authenticateDevice() {
+            log('Attempting device authentication...');
+            
+            try {
+                // Look for a custom service that might handle authentication
+                const authServiceUUIDs = [
+                    '0000fee1-0000-1000-8000-00805f9b34fb', // Common auth service
+                    '0000fee0-0000-1000-8000-00805f9b34fb'  // Mi Band service
+                ];
+                
+                for (const serviceUUID of authServiceUUIDs) {
+                    try {
+                        const service = await gattServer.getPrimaryService(serviceUUID);
+                        if (service) {
+                            log(`Found potential auth service: ${serviceUUID}`);
+                            
+                            // Common auth characteristic UUIDs
+                            const authCharUUIDs = [
+                                '00000009-0000-3512-2118-0009af100700', // Common auth char
+                                '00000010-0000-3512-2118-0009af100700', // Another common auth char
+                                '0000fee1-0000-1000-8000-00805f9b34fb', // Auth control point
+                                '0000fe95-0000-1000-8000-00805f9b34fb', // Control characteristic
+                                '00002a46-0000-1000-8000-00805f9b34fb', // New Alert
+                                '00002a06-0000-1000-8000-00805f9b34fb'  // Alert Level
+                            ];
+                            
+                            for (const charUUID of authCharUUIDs) {
+                                try {
+                                    const characteristic = await service.getCharacteristic(charUUID);
+                                    if (characteristic) {
+                                        log(`Found potential auth characteristic: ${charUUID}`);
+                                        
+                                        // Try a few common authentication commands
+                                        const authCommands = [
+                                            [0x01, 0x08], // Common "wake up" command
+                                            [0x01, 0x00], // Enable notifications
+                                            [0x02, 0x08]  // Another common auth command
+                                        ];
+                                        
+                                        for (const cmd of authCommands) {
+                                            try {
+                                                await characteristic.writeValue(new Uint8Array(cmd));
+                                                log(`Sent auth command: ${cmd.map(b => b.toString(16)).join(' ')}`);
+                                                // Wait a moment for the device to process
+                                                await new Promise(resolve => setTimeout(resolve, 500));
+                                            } catch (error) {
+                                                // Silently ignore errors
+                                            }
+                                        }
+                                    }
+                                } catch (error) {
+                                    // Silently ignore errors
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        // Silently ignore errors for services that don't exist
+                    }
+                }
+                
+                log('Auth attempts completed');
+                return true;
+            } catch (error) {
+                log(`Authentication failed: ${error}`);
+                return false;
+            }
+        }
+        
+        // Connect to SR08 J-Ring
+        async function connect() {
+            try {
+                log('Requesting Bluetooth Device...');
+                bluetoothDevice = await navigator.bluetooth.requestDevice({
+                    // You can specify exact name or partial name
+                    filters: [
+                        { namePrefix: 'SR08' },
+                        { namePrefix: 'J-Ring' }
+                    ],
+                    // Include the specific services you found with nRF
+                    optionalServices: [
+                        '00001800-0000-1000-8000-00805f9b34fb', // Generic Access
+                        '00001801-0000-1000-8000-00805f9b34fb', // Generic Attribute
+                        '00000812-0000-1000-8000-00805f9b34fb', // Custom service 0x812
+                        '0000fef5-0000-1000-8000-00805f9b34fb', // Custom service 0xFEF5
+                        '000056ff-0000-1000-8000-00805f9b34fb'  // Custom service 0x56FF
+                    ],
+                    acceptAllDevices: false
+                });
+                
+                log(`Device selected: ${bluetoothDevice.name}`);
+                deviceInfoDiv.innerHTML = `<h2>Connected Device: ${bluetoothDevice.name}</h2>`;
+                
+                bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+                
+                log('Connecting to GATT Server...');
+                gattServer = await bluetoothDevice.gatt.connect();
+                
+                // Try authentication before service discovery
+                await authenticateDevice();
+                
+                log('Getting Primary Services...');
+                let services = [];
+                try {
+                    // Try the standard approach first
+                    services = await gattServer.getPrimaryServices();
+                    log(`Found ${services.length} services`);
+                } catch (error) {
+                    log(`Error getting all services: ${error}`);
+                }
+                
+                // If we found very few services, try querying some common ones explicitly
+                if (services.length < 3) {
+                    log('Trying to discover additional services individually...');
+                    const commonServiceUUIDs = [
+                        // Add the specific services you found with nRF
+                        '00000812-0000-1000-8000-00805f9b34fb', // Custom service 0x812
+                        '0000fef5-0000-1000-8000-00805f9b34fb', // Custom service 0xFEF5
+                        '000056ff-0000-1000-8000-00805f9b34fb', // Custom service 0x56FF
+                        
+                        // Try shorter versions as well (some devices use abbreviated forms)
+                        '0812',
+                        'fef5',
+                        '56ff',
+                        
+                        // Also try common health services
+                        '0000180d-0000-1000-8000-00805f9b34fb', // Heart Rate Service
+                        '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
+                    ];
+                    
+                    for (const uuid of commonServiceUUIDs) {
+                        try {
+                            const service = await gattServer.getPrimaryService(uuid);
+                            if (service && !services.some(s => s.uuid === service.uuid)) {
+                                services.push(service);
+                                log(`Found additional service: ${service.uuid}`);
+                            }
+                        } catch (error) {
+                            // Silently ignore errors for services that don't exist
+                        }
+                    }
+                }
+                
+                log(`Total services found: ${services.length}`);
+                
+                servicesContainer.innerHTML = ''; // Clear previous services
+                
+                // Display each service
+                for (const service of services) {
+                    await displayService(service);
+                }
+                
+                connectButton.disabled = true;
+                disconnectButton.disabled = false;
+                log('Device connected and services discovered.');
+            } catch (error) {
+                log(`Connection failed: ${error}`);
+                deviceInfoDiv.innerHTML = `<p class="error">Connection Error: ${error}</p>`;
+            }
+        }
+        
+        // Disconnect from device
+        async function disconnect() {
+            if (gattServer && gattServer.connected) {
+                // Stop all active notifications
+                for (const [uuid, characteristic] of notificationCharacteristics.entries()) {
+                    try {
+                        await characteristic.stopNotifications();
+                        characteristic.removeEventListener('characteristicvaluechanged', 
+                                                         handleCharacteristicValueChanged);
+                        log(`Stopped notifications for ${uuid}`);
+                    } catch (error) {
+                        log(`Error stopping notifications for ${uuid}: ${error}`);
+                    }
+                }
+                notificationCharacteristics.clear();
+                
+                // Disconnect from the device
+                gattServer.disconnect();
+                log('Disconnected from device.');
+            } else {
+                log('No device connected.');
+            }
+            
+            connectButton.disabled = false;
+            disconnectButton.disabled = true;
+        }
+        
+        // Handle disconnection event
+        function onDisconnected() {
+            log('Device disconnected.');
+            connectButton.disabled = false;
+            disconnectButton.disabled = true;
+            notificationCharacteristics.clear();
+        }
+        
+        // Event listeners
+        connectButton.addEventListener('click', connect);
+        disconnectButton.addEventListener('click', disconnect);
+        
+        // Check if Web Bluetooth is supported
+        if (!navigator.bluetooth) {
+            log('Web Bluetooth API is not supported in this browser!');
+            connectButton.disabled = true;
+            deviceInfoDiv.innerHTML = `<p class="error">
+                                     Web Bluetooth is not supported in this browser. 
+                                     Please use Chrome, Edge, or Opera on desktop, 
+                                     or Chrome on Android.</p>`;
+        } else {
+            log('Web Bluetooth API is supported. Click "Connect to SR08" to begin.');
+        }
+    </script>
+</body>
+</html>
