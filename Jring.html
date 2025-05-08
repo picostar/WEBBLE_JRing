@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SR08 J-Ring Service Explorer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .service {
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #e6f7ff;
+            border-left: 5px solid #1890ff;
+        }
+        .characteristic {
+            margin-left: 20px;
+            margin-top: 5px;
+            padding: 8px;
+            background-color: #f6ffed;
+            border-left: 3px solid #52c41a;
+        }
+        .value {
+            margin-left: 40px;
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #fff7e6;
+            border-left: 2px solid #faad14;
+            font-family: monospace;
+        }
+        .error {
+            color: red;
+        }
+        .descriptor {
+            margin-left: 40px;
+            margin-top: 5px;
+            padding: 5px;
+            background-color: #f9f0ff;
+            border-left: 2px solid #722ed1;
+        }
+        #notifications {
+            margin-top: 20px;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Page Title -->
+    <h1>SR08 J-Ring Service Explorer</h1>
+    <!-- Description for the user -->
+    <p>This tool will help you discover and read all available services and characteristics from your SR08 J-Ring, including heart rate, SpO2, and battery information.</p>
+    
+    <!-- Connection buttons -->
+    <div>
+        <button id="connect">Connect to SR08</button>
+        <button id="disconnect" disabled>Disconnect</button>
+    </div>
+    
+    <!-- Device info and services will be displayed here -->
+    <div id="deviceInfo"></div>
+    <div id="servicesContainer"></div>
+    <h3>Log:</h3>
+    <pre id="output"></pre>
+    <div id="notifications">
+        <h3>Notifications:</h3>
+        <pre id="notificationOutput"></pre>
+    </div>
+    <script>
+        // DOM elements
+        const connectButton = document.getElementById('connect');
+        const disconnectButton = document.getElementById('disconnect');
+        const output = document.getElementById('output');
+        const deviceInfoDiv = document.getElementById('deviceInfo');
+        const servicesContainer = document.getElementById('servicesContainer');
+        const notificationOutput = document.getElementById('notificationOutput');
+        
+        // Global variables for Bluetooth device and GATT server
+        let bluetoothDevice;
+        let gattServer;
+        let notificationCharacteristics = new Map();
+        
+        // Known service and characteristic UUIDs for friendly names
+        const knownServices = {
+            '00001800-0000-1000-8000-00805f9b34fb': 'Generic Access',
+            '00001801-0000-1000-8000-00805f9b34fb': 'Generic Attribute',
+            '0000180d-0000-1000-8000-00805f9b34fb': 'Heart Rate Service',
+            '0000180f-0000-1000-8000-00805f9b34fb': 'Battery Service',
+            '00001809-0000-1000-8000-00805f9b34fb': 'Health Thermometer',
+            '00001822-0000-1000-8000-00805f9b34fb': 'Pulse Oximeter Service'
+        };
+        
+        const knownCharacteristics = {
+            '00002a00-0000-1000-8000-00805f9b34fb': 'Device Name',
+            '00002a01-0000-1000-8000-00805f9b34fb': 'Appearance',
+            '00002a19-0000-1000-8000-00805f9b34fb': 'Battery Level',
+            '00002a37-0000-1000-8000-00805f9b34fb': 'Heart Rate Measurement',
+            '00002a5e-0000-1000-8000-00805f9b34fb': 'PLX Spot-Check Measurement',
+            '00002a5f-0000-1000-8000-00805f9b34fb': 'PLX Continuous Measurement'
+        };
+        
+        // Helper function to log messages to the output panel
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            output.textContent += `[${timestamp}] ${message}\n`;
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        // Helper function to log notifications to the notification panel
+        function logNotification(uuid, value) {
+            const timestamp = new Date().toLocaleTimeString();
+            const serviceName = getServiceName(uuid.split('-')[0]);
+            notificationOutput.textContent += `[${timestamp}] ${serviceName} (${uuid}): ${value}\n`;
+            notificationOutput.scrollTop = notificationOutput.scrollHeight;
+        }
+        
+        // Get a friendly name for a service UUID
+        function getServiceName(uuid) {
+            return knownServices[uuid] || 'Unknown Service';
+        }
+        
+        // Get a friendly name for a characteristic UUID
+        function getCharacteristicName(uuid) {
+            return knownCharacteristics[uuid] || 'Unknown Characteristic';
+        }
+        
+        // Convert an ArrayBuffer to a hex string
+        function bufferToHex(buffer) {
+            return Array.from(new Uint8Array(buffer))
+                .map(b => b.toString(16).padStart(2, '0'))
+                .join(' ');
+        }
+        
+        // Parse heart rate measurement value
+        function parseHeartRate(value) {
+            const dataView = new DataView(value.buffer);
+            const flags = dataView.getUint8(0);
+            const hrFormat = flags & 0x1; // 0 = UINT8, 1 = UINT16
+            
+            let heartRate;
+            if (hrFormat === 0) {
+                heartRate = dataView.getUint8(1);
+            } else {
+                heartRate = dataView.getUint16(1, true);
+            }
+            
+            return `Heart Rate: ${heartRate} BPM`;
+        }
+        
+        // Parse battery level value
+        function parseBatteryLevel(value) {
+            const dataView = new DataView(value.buffer);
+            const level = dataView.getUint8(0);
+            return `Battery Level: ${level}%`;
+        }
+        
+        // Try to parse known characteristic values, otherwise show raw hex
+        function parseValue(characteristic, value) {
+            const uuid = characteristic.uuid;
+            
+            // Try to parse known characteristics
+            if (uuid === '00002a37-0000-1000-8000-00805f9b34fb') { // Heart Rate Measurement
+                return parseHeartRate(value);
+            } else if (uuid === '00002a19-0000-1000-8000-00805f9b34fb') { // Battery Level
+                return parseBatteryLevel(value);
+            } else if (uuid === '00002a00-0000-1000-8000-00805f9b34fb') { // Device Name
+                return `Device Name: ${new TextDecoder().decode(value)}`;
+            }
+            
+            // Default to hex representation
+            return `Raw Value: ${bufferToHex(value.buffer)}`;
+        }
+        
+        // Handle characteristic value changed notifications
+        function handleCharacteristicValueChanged(event) {
+            const characteristic = event.target;
+            const value = event.target.value;
+            const parsed = parseValue(characteristic, value);
+            logNotification(characteristic.uuid, parsed);
+        }
+        
+        // Get property names from characteristic properties object
+        function getPropertyNames(properties) {
+            const propertyNames = [];
+            if (properties.broadcast) propertyNames.push('broadcast');
+            if (properties.read) propertyNames.push('read');
+            if (properties.writeWithoutResponse) propertyNames.push('writeWithoutResponse');
+            if (properties.write) propertyNames.push('write');
+            if (properties.notify) propertyNames.push('notify');
+            if (properties.indicate) propertyNames.push('indicate');
+            if (properties.authenticatedSignedWrites) propertyNames.push('authenticatedSignedWrites');
+            if (properties.reliableWrite) propertyNames.push('reliableWrite');
+            if (properties.writableAuxiliaries) propertyNames.push('writableAuxiliaries');
+            return propertyNames.join(', ');
+        }
+    </script>
+</body>
+</html>
