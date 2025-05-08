@@ -1,4 +1,4 @@
-# WEBBLE_CGM
+# WEBBLE_JRing
 
 This project contains a collection of HTML files for interacting with Bluetooth-enabled devices, such as the SR08 Smart Ring. These tools leverage the Web Bluetooth API to connect, discover services, and interact with Bluetooth devices.
 
